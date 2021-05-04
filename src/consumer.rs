@@ -542,11 +542,15 @@ impl<T: DeserializeMessage, Exe: Executor> TopicConsumer<T, Exe> {
         Ok(())
     }
 
-    pub async fn ack(&mut self, msg: &Message<T>) -> Result<(), ConsumerError> {
+    async fn ack(&mut self, msg: &Message<T>) -> Result<(), ConsumerError> {
         self.ack_tx
             .send(AckMessage::Ack(msg.message_id.clone(), false))
             .await?;
         Ok(())
+    }
+
+    pub(crate) fn acker(&self) -> mpsc::UnboundedSender<AckMessage> {
+        self.ack_tx.clone()
     }
 
     async fn cumulative_ack(&mut self, msg: &Message<T>) -> Result<(), ConsumerError> {
@@ -638,7 +642,7 @@ struct ConsumerEngine<Exe: Executor> {
     _drop_signal: oneshot::Sender<()>,
 }
 
-enum AckMessage {
+pub(crate) enum AckMessage {
     Ack(MessageData, bool),
     Nack(MessageData),
     UnackedRedelivery,
@@ -1147,7 +1151,7 @@ impl<Exe: Executor> ConsumerEngine<Exe> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct MessageData {
+pub(crate) struct MessageData {
     id: proto::MessageIdData,
     batch_size: Option<i32>,
 }
@@ -1686,7 +1690,7 @@ pub struct Message<T> {
     pub topic: String,
     /// contains the message's data and other metadata
     pub payload: Payload,
-    pub message_id: MessageData,
+    pub(crate) message_id: MessageData,
     _phantom: PhantomData<T>,
 }
 

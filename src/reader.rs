@@ -1,12 +1,13 @@
 use crate::client::DeserializeMessage;
-use crate::consumer::{ConsumerOptions, DeadLetterPolicy, Message, TopicConsumer};
+use crate::consumer::{AckMessage, ConsumerOptions, DeadLetterPolicy, Message, TopicConsumer};
 use crate::error::{ConsumerError, Error};
 use crate::executor::Executor;
 use crate::message::proto::command_subscribe::SubType;
 use crate::Pulsar;
 use chrono::{DateTime, Utc};
 use futures::task::{Context, Poll};
-use futures::{Future, Stream, StreamExt};
+use futures::{Future, SinkExt, Stream, StreamExt};
+use futures::channel::mpsc::SendError;
 use regex::Regex;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
@@ -20,40 +21,42 @@ pub struct ReaderOptions {
 
 pub struct Reader<T: DeserializeMessage, Exe: Executor> {
     consumer: TopicConsumer<T, Exe>,
-    state: State<T>,
+    state: Option<State<T>>,
 }
 
-enum State<T> {
+impl<T: DeserializeMessage + 'static, Exe: Executor> Unpin for Reader<T, Exe> {}
+
+enum State<T: DeserializeMessage> {
     PollingConsumer,
-    PollingAck(
-        Message<T>,
-        Pin<Box<dyn Future<Output = Result<(), ConsumerError>>>>,
-    ),
+    PollingAck(Message<T>, Pin<Box<dyn Future<Output = Result<(), SendError>>>>),
 }
 
 impl<T: DeserializeMessage + 'static, Exe: Executor> Stream for Reader<T, Exe> {
     type Item = Result<Message<T>, Error>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.state {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        match this.state.take().unwrap() {
             State::PollingConsumer => {
-                let pinned_consumer = Pin::new(&mut self.consumer);
-                match pinned_consumer.poll_next(cx) {
+                match Pin::new(&mut this.consumer).poll_next(cx) {
                     Poll::Pending => Poll::Pending,
                     Poll::Ready(None) => Poll::Ready(None),
                     Poll::Ready(Some(Ok(msg))) => {
-                        let ack_fut = pinned_consumer.ack(&msg);
-                        self.state = State::PollingAck(msg, Box::pin(ack_fut));
-                        return self.poll_next(cx);
+                        let mut acker = this.consumer.acker();
+                        let message_id = msg.message_id.clone();
+                        this.state = Some(State::PollingAck(msg, Box::pin(async move {
+                            acker.send(AckMessage::Ack(message_id, false)).await
+                        })));
+                        return Pin::new(this).poll_next(cx);
                     }
                     Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
                 }
             }
-            State::PollingAck(msg, ack_fut) => match Pin::new(&mut ack_fut).poll(cx) {
+            State::PollingAck(msg, mut ack_fut) => match ack_fut.as_mut().poll(cx) {
                 Poll::Pending => return Poll::Pending,
-                Poll::Ready(Ok(())) => {
-                    self.state = State::PollingConsumer;
-                    return Poll::Ready(Some(Ok(msg)));
+                Poll::Ready(res) => {
+                    this.state = Some(State::PollingConsumer);
+                    return Poll::Ready(Some(res.map_err(|err| Error::Consumer(err.into())).map(|()| msg)));
                 }
             },
         }
