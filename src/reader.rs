@@ -1,12 +1,12 @@
 use crate::client::DeserializeMessage;
 use crate::consumer::{ConsumerOptions, DeadLetterPolicy, Message, TopicConsumer};
-use crate::error::Error;
+use crate::error::{ConsumerError, Error};
 use crate::executor::Executor;
 use crate::message::proto::command_subscribe::SubType;
 use crate::Pulsar;
 use chrono::{DateTime, Utc};
 use futures::task::{Context, Poll};
-use futures::{Stream, StreamExt};
+use futures::{Future, Stream, StreamExt};
 use regex::Regex;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
@@ -20,13 +20,37 @@ pub struct ReaderOptions {
 
 pub struct Reader<T: DeserializeMessage, Exe: Executor> {
     consumer: TopicConsumer<T, Exe>,
+    state: State<T>,
+}
+
+enum State<T> {
+    PollingConsumer,
+    PollingAck(Message<T>, Future<Output = Result<(), ConsumerError>>),
 }
 
 impl<T: DeserializeMessage + 'static, Exe: Executor> Stream for Reader<T, Exe> {
     type Item = Result<Message<T>, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.consumer).poll_next(cx)
+        match self.state {
+            State::PollingConsumer => match Pin::new(&mut self.consumer).poll_next(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(None) => Poll::Ready(None),
+                Poll::Ready(Some(Ok(msg))) => {
+                    let ack_fut = self.consumer.ack(&msg);
+                    self.state = State::PollingAck(msg, ack_fut);
+                    return self.poll_next(cx);
+                }
+                Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
+            },
+            State::PollingAck(msg, ack_fut) => match ack_fut.poll() {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(()) => {
+                    self.state = State::PollingConsumer;
+                    return Poll::Ready(Some(Ok(msg)));
+                }
+            },
+        }
     }
 }
 

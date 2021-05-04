@@ -542,7 +542,7 @@ impl<T: DeserializeMessage, Exe: Executor> TopicConsumer<T, Exe> {
         Ok(())
     }
 
-    async fn ack(&mut self, msg: &Message<T>) -> Result<(), ConsumerError> {
+    pub async fn ack(&mut self, msg: &Message<T>) -> Result<(), ConsumerError> {
         self.ack_tx
             .send(AckMessage::Ack(msg.message_id.clone(), false))
             .await?;
@@ -1686,7 +1686,7 @@ pub struct Message<T> {
     pub topic: String,
     /// contains the message's data and other metadata
     pub payload: Payload,
-    message_id: MessageData,
+    pub message_id: MessageData,
     _phantom: PhantomData<T>,
 }
 
