@@ -209,7 +209,7 @@ impl<T: DeserializeMessage, Exe: Executor> Consumer<T, Exe> {
     /// returns the list of topics this consumer is subscribed on
     pub fn topics(&self) -> Vec<String> {
         match &self.inner {
-            InnerConsumer::Single(c) => vec![c.topic.clone()],
+            InnerConsumer::Single(c) => vec![c.topic()],
             InnerConsumer::Multi(c) => c.topics(),
         }
     }
@@ -334,15 +334,15 @@ enum InnerConsumer<T: DeserializeMessage, Exe: Executor> {
 type MessageIdDataReceiver = mpsc::Receiver<Result<(proto::MessageIdData, Payload), Error>>;
 
 pub(crate) struct TopicConsumer<T: DeserializeMessage, Exe: Executor> {
-    consumer_id: u64,
-    config: ConsumerConfig,
-    connection: Arc<Connection<Exe>>,
-    topic: String,
+    pub consumer_id: u64,
+    pub config: ConsumerConfig,
+    pub connection: Arc<Connection<Exe>>,
+    pub topic: String,
     messages: Pin<Box<MessageIdDataReceiver>>,
     ack_tx: mpsc::UnboundedSender<AckMessage>,
     #[allow(unused)]
     data_type: PhantomData<fn(Payload) -> T::Output>,
-    dead_letter_policy: Option<DeadLetterPolicy>,
+    pub dead_letter_policy: Option<DeadLetterPolicy>,
     last_message_received: Option<DateTime<Utc>>,
     messages_received: u64,
 }
@@ -533,11 +533,11 @@ impl<T: DeserializeMessage, Exe: Executor> TopicConsumer<T, Exe> {
         })
     }
 
-    fn topic(&self) -> &str {
-        &self.topic
+    pub fn topic(&self) -> String {
+        self.topic.clone()
     }
 
-    async fn check_connection(&self) -> Result<(), Error> {
+    pub async fn check_connection(&self) -> Result<(), Error> {
         self.connection.sender().send_ping().await?;
         Ok(())
     }
@@ -576,11 +576,11 @@ impl<T: DeserializeMessage, Exe: Executor> TopicConsumer<T, Exe> {
         Ok(())
     }
 
-    fn last_message_received(&self) -> Option<DateTime<Utc>> {
+    pub fn last_message_received(&self) -> Option<DateTime<Utc>> {
         self.last_message_received
     }
 
-    fn messages_received(&self) -> u64 {
+    pub fn messages_received(&self) -> u64 {
         self.messages_received
     }
 
@@ -1476,23 +1476,23 @@ impl<Exe: Executor> ConsumerBuilder<Exe> {
 #[derive(Debug, Clone, Default)]
 pub struct ConsumerConfig {
     /// subscription name
-    subscription: String,
+    pub subscription: String,
     /// subscription type
     ///
     /// default: Shared
-    sub_type: SubType,
+    pub sub_type: SubType,
     /// maximum size for batched messages
     ///
     /// default: 1000
-    batch_size: Option<u32>,
+    pub batch_size: Option<u32>,
     /// name of the consumer
-    consumer_name: Option<String>,
+    pub consumer_name: Option<String>,
     /// numerical id of the consumer
     consumer_id: Option<u64>,
     /// time after which unacked messages will be sent again
     unacked_message_redelivery_delay: Option<Duration>,
     /// consumer options
-    options: ConsumerOptions,
+    pub options: ConsumerOptions,
     /// dead letter policy
     dead_letter_policy: Option<DeadLetterPolicy>,
 }

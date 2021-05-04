@@ -1,5 +1,5 @@
 use crate::client::DeserializeMessage;
-use crate::consumer::{TopicConsumer, ConsumerOptions, DeadLetterPolicy, Message};
+use crate::consumer::{ConsumerOptions, DeadLetterPolicy, Message, TopicConsumer};
 use crate::error::Error;
 use crate::executor::Executor;
 use crate::message::proto::command_subscribe::SubType;
@@ -44,47 +44,51 @@ impl<T: DeserializeMessage, Exe: Executor> Reader<T, Exe> {
     // no ack methods - it's a reader!
 
     /// returns topic this reader is subscribed on
-    pub fn topic(&self) -> Vec<String> {
+    pub fn topic(&self) -> String {
         self.consumer.topic()
     }
 
     /// returns a list of broker URLs this reader is connnected to
-    pub fn connections(&self) -> Vec<&Url> {
-        self.consumer.connections()
+    pub fn connections(&self) -> &Url {
+        self.consumer.connection.url()
     }
     /// returns the consumer's configuration options
     pub fn options(&self) -> &ConsumerOptions {
-        self.consumer.options()
+        &self.consumer.config.options
     }
 
     // is this necessary?
     /// returns the consumer's dead letter policy options
     pub fn dead_letter_policy(&self) -> Option<&DeadLetterPolicy> {
-        self.consumer.dead_letter_policy()
+        self.consumer.dead_letter_policy.as_ref()
     }
 
     /// returns the readers's subscription name
     pub fn subscription(&self) -> &str {
-        self.consumer.subscription()
+        &self.consumer.config.subscription
     }
     /// returns the reader's subscription type
     pub fn sub_type(&self) -> SubType {
-        self.consumer.sub_type()
+        self.consumer.config.sub_type
     }
 
     /// returns the reader's batch size
     pub fn batch_size(&self) -> Option<u32> {
-        self.consumer.batch_size()
+        self.consumer.config.batch_size
     }
 
     /// returns the reader's name
     pub fn reader_name(&self) -> Option<&str> {
-        self.consumer.consumer_name()
+        self.consumer
+            .config
+            .consumer_name
+            .as_ref()
+            .map(|s| s.as_str())
     }
 
-    /// returns the reader's list of ids
-    pub fn reader_id(&self) -> Vec<u64> {
-        self.consumer.consumer_id()
+    /// returns the reader's id
+    pub fn reader_id(&self) -> u64 {
+        self.consumer.consumer_id
     }
 
     /// returns the date of the last message reception
