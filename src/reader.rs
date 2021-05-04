@@ -1,13 +1,12 @@
 use crate::client::DeserializeMessage;
-use crate::consumer::{Consumer, ConsumerOptions, Message, DeadLetterPolicy};
-use crate::error::{ConnectionError, ConsumerError, Error};
+use crate::consumer::{TopicConsumer, ConsumerOptions, DeadLetterPolicy, Message};
+use crate::error::Error;
 use crate::executor::Executor;
+use crate::message::proto::command_subscribe::SubType;
 use crate::Pulsar;
+use chrono::{DateTime, Utc};
 use futures::task::{Context, Poll};
-use futures::{
-    channel::{mpsc, oneshot},
-    Future, FutureExt, SinkExt, Stream, StreamExt,
-};
+use futures::{Stream, StreamExt};
 use regex::Regex;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
@@ -20,7 +19,7 @@ pub struct ReaderOptions {
 }
 
 pub struct Reader<T: DeserializeMessage, Exe: Executor> {
-    consumer: Consumer<T, Exe>,
+    consumer: TopicConsumer<T, Exe>,
 }
 
 impl<T: DeserializeMessage + 'static, Exe: Executor> Stream for Reader<T, Exe> {
@@ -44,9 +43,9 @@ impl<T: DeserializeMessage, Exe: Executor> Reader<T, Exe> {
 
     // no ack methods - it's a reader!
 
-    /// returns the list of topics this reader is subscribed on
-    pub fn topics(&self) -> Vec<String> {
-        self.consumer.topics()
+    /// returns topic this reader is subscribed on
+    pub fn topic(&self) -> Vec<String> {
+        self.consumer.topic()
     }
 
     /// returns a list of broker URLs this reader is connnected to
