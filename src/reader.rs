@@ -25,7 +25,10 @@ pub struct Reader<T: DeserializeMessage, Exe: Executor> {
 
 enum State<T> {
     PollingConsumer,
-    PollingAck(Message<T>, Future<Output = Result<(), ConsumerError>>),
+    PollingAck(
+        Message<T>,
+        Pin<Box<dyn Future<Output = Result<(), ConsumerError>>>>,
+    ),
 }
 
 impl<T: DeserializeMessage + 'static, Exe: Executor> Stream for Reader<T, Exe> {
@@ -33,19 +36,22 @@ impl<T: DeserializeMessage + 'static, Exe: Executor> Stream for Reader<T, Exe> {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.state {
-            State::PollingConsumer => match Pin::new(&mut self.consumer).poll_next(cx) {
-                Poll::Pending => Poll::Pending,
-                Poll::Ready(None) => Poll::Ready(None),
-                Poll::Ready(Some(Ok(msg))) => {
-                    let ack_fut = self.consumer.ack(&msg);
-                    self.state = State::PollingAck(msg, ack_fut);
-                    return self.poll_next(cx);
+            State::PollingConsumer => {
+                let pinned_consumer = Pin::new(&mut self.consumer);
+                match pinned_consumer.poll_next(cx) {
+                    Poll::Pending => Poll::Pending,
+                    Poll::Ready(None) => Poll::Ready(None),
+                    Poll::Ready(Some(Ok(msg))) => {
+                        let ack_fut = pinned_consumer.ack(&msg);
+                        self.state = State::PollingAck(msg, Box::pin(ack_fut));
+                        return self.poll_next(cx);
+                    }
+                    Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
                 }
-                Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
-            },
-            State::PollingAck(msg, ack_fut) => match ack_fut.poll() {
+            }
+            State::PollingAck(msg, ack_fut) => match Pin::new(&mut ack_fut).poll(cx) {
                 Poll::Pending => return Poll::Pending,
-                Poll::Ready(()) => {
+                Poll::Ready(Ok(())) => {
                     self.state = State::PollingConsumer;
                     return Poll::Ready(Some(Ok(msg)));
                 }
